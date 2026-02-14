@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: Inventory API Laravel
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000
+paths:
+  /api/auth/login:
+    post:
+      summary: Login and issue token
+  /api/auth/register-owner:
+    post:
+      summary: Register owner and tenant
+  /api/auth/logout:
+    post:
+      summary: Revoke current token
+      security:
+        - bearerAuth: []
+  /api/auth/me:
+    get:
+      summary: Current authenticated user
+      security:
+        - bearerAuth: []
+  /api/tenant/context:
+    get:
+      summary: Membership list or tenant context
+      security:
+        - bearerAuth: []
+  /api/tenant/staff:
+    post:
+      summary: Create tenant staff user
+      security:
+        - bearerAuth: []
+  /api/billing/invoices:
+    post:
+      summary: Create tenant invoice
+      security:
+        - bearerAuth: []
+  /api/billing/payments/upload-url:
+    post:
+      summary: Create upload intent for payment proof
+      security:
+        - bearerAuth: []
+  /api/billing/payments/upload:
+    post:
+      summary: Upload payment proof file
+  /api/billing/payments/submit:
+    post:
+      summary: Submit payment record
+      security:
+        - bearerAuth: []
+  /api/platform/billing/run-daily:
+    post:
+      summary: Run daily billing state transition by cron secret
+  /api/platform/payments:
+    get:
+      summary: List payment submissions (platform admin)
+      security:
+        - bearerAuth: []
+  /api/platform/payments/{submissionId}/approve:
+    post:
+      summary: Approve payment submission
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: submissionId
+          required: true
+          schema:
+            type: string
+  /api/platform/payments/{submissionId}/reject:
+    post:
+      summary: Reject payment submission
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: submissionId
+          required: true
+          schema:
+            type: string
+  /api/platform/plans:
+    get:
+      summary: List platform plans
+      security:
+        - bearerAuth: []
+    post:
+      summary: Create platform plan
+      security:
+        - bearerAuth: []
+    patch:
+      summary: Update platform plan
+      security:
+        - bearerAuth: []
+  /api/platform/tenants:
+    get:
+      summary: List tenants with owner/subscription summary
+      security:
+        - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
