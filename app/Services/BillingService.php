@@ -25,7 +25,7 @@ class BillingService
             'tenant_id' => null,
             'code' => 'standard',
             'name' => 'Standard',
-            'description' => 'Paket standar untuk semua tenant.',
+            'description' => 'Paket standar untuk semua outlet/cabang.',
             'monthly_price' => 199000,
             'yearly_price' => 1990000,
             'is_active' => true,
@@ -42,7 +42,7 @@ class BillingService
             ->first();
 
         if (!$subscription) {
-            throw new RuntimeException('Subscription not found');
+            throw new RuntimeException('Data langganan tidak ditemukan.');
         }
 
         $plan = $planId
@@ -50,7 +50,7 @@ class BillingService
             : DB::table('plans')->whereNull('tenant_id')->where('is_active', true)->orderBy('created_at')->first();
 
         if (!$plan) {
-            throw new RuntimeException('Plan not found');
+            throw new RuntimeException('Paket tidak ditemukan.');
         }
 
         $id = (string) Str::uuid();
@@ -83,7 +83,7 @@ class BillingService
             ->first();
 
         if (!$invoice) {
-            throw new RuntimeException('Invoice not found or not payable');
+            throw new RuntimeException('Invoice tidak ditemukan atau sudah tidak dapat dibayar.');
         }
 
         $id = (string) Str::uuid();
@@ -112,12 +112,12 @@ class BillingService
             $submission = DB::table('payment_submissions')->where('id', $submissionId)->lockForUpdate()->first();
 
             if (!$submission || $submission->status !== 'pending') {
-                throw new RuntimeException('Payment submission not found or already reviewed');
+                throw new RuntimeException('Bukti pembayaran tidak ditemukan atau sudah diproses.');
             }
 
             $invoice = DB::table('invoices')->where('id', $submission->invoice_id)->lockForUpdate()->first();
             if (!$invoice) {
-                throw new RuntimeException('Invoice not found');
+                throw new RuntimeException('Invoice tidak ditemukan.');
             }
 
             $now = now();
@@ -171,12 +171,12 @@ class BillingService
             $submission = DB::table('payment_submissions')->where('id', $submissionId)->lockForUpdate()->first();
 
             if (!$submission || $submission->status !== 'pending') {
-                throw new RuntimeException('Payment submission not found or already reviewed');
+                throw new RuntimeException('Bukti pembayaran tidak ditemukan atau sudah diproses.');
             }
 
             $invoice = DB::table('invoices')->where('id', $submission->invoice_id)->lockForUpdate()->first();
             if (!$invoice) {
-                throw new RuntimeException('Invoice not found');
+                throw new RuntimeException('Invoice tidak ditemukan.');
             }
 
             $now = now();
@@ -227,7 +227,7 @@ class BillingService
             ->where('status', 'trialing')
             ->where('trial_end_at', '<', $at)
             ->update([
-                'status' => 'past_due',
+                'status' => 'expired',
                 'read_only_mode' => true,
                 'updated_at' => $at,
             ]);
@@ -244,6 +244,21 @@ class BillingService
             'trialExpiredCount' => $trialExpiredCount,
             'expiredInvoiceCount' => $expiredInvoiceCount,
         ];
+    }
+
+    public function syncTenantBillingState(string $tenantId, ?Carbon $now = null): void
+    {
+        $at = $now ?? now();
+
+        DB::table('subscriptions')
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'trialing')
+            ->where('trial_end_at', '<', $at)
+            ->update([
+                'status' => 'expired',
+                'read_only_mode' => true,
+                'updated_at' => $at,
+            ]);
     }
 
     public function createUploadIntent(string $tenantId, ?string $ext = null): array
@@ -273,7 +288,7 @@ class BillingService
         $intent = Cache::pull('upload-intent:'.$uploadToken);
 
         if (!is_array($intent) || empty($intent['path'])) {
-            throw new RuntimeException('Upload token invalid or expired');
+            throw new RuntimeException('Token unggah tidak valid atau sudah kadaluarsa.');
         }
 
         Storage::disk('public')->put($intent['path'], file_get_contents($file->getRealPath()));

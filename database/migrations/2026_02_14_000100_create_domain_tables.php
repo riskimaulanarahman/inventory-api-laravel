@@ -213,7 +213,7 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->uuid('tenant_id');
             $table->uuid('plan_id')->nullable();
-            $table->enum('status', ['trialing', 'active', 'past_due', 'canceled'])->default('trialing');
+            $table->enum('status', ['trialing', 'active', 'past_due', 'canceled', 'expired'])->default('trialing');
             $table->enum('current_cycle', ['monthly', 'yearly'])->nullable();
             $table->timestamp('trial_start_at')->nullable();
             $table->timestamp('trial_end_at')->nullable();

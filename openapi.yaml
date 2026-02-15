@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Inventory API Laravel
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: http://localhost:8000
 paths:
@@ -21,16 +21,280 @@ paths:
       summary: Current authenticated user
       security:
         - bearerAuth: []
+  /api/auth/profile:
+    patch:
+      summary: Update current user profile (displayName, phone)
+      security:
+        - bearerAuth: []
+  /api/auth/password:
+    patch:
+      summary: Change current user password
+      security:
+        - bearerAuth: []
   /api/tenant/context:
     get:
       summary: Membership list or tenant context
       security:
         - bearerAuth: []
   /api/tenant/staff:
-    post:
-      summary: Create tenant staff user
+    get:
+      summary: List active staff for tenant (owner only)
       security:
         - bearerAuth: []
+    post:
+      summary: Create or reactivate tenant staff user (owner only)
+      security:
+        - bearerAuth: []
+  /api/tenant/staff/{membershipId}:
+    patch:
+      summary: Update tenant staff profile and outlet assignments (owner only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: membershipId
+          required: true
+          schema:
+            type: string
+    delete:
+      summary: Deactivate tenant staff membership (owner only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: membershipId
+          required: true
+          schema:
+            type: string
+  /api/tenant/staff/{membershipId}/password-reset:
+    patch:
+      summary: Reset tenant staff temporary password (owner only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: membershipId
+          required: true
+          schema:
+            type: string
+
+  /api/inventory/{tenantSlug}/snapshot:
+    get:
+      summary: Fetch inventory snapshot for tenant
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+  /api/inventory/{tenantSlug}/categories:
+    post:
+      summary: Create inventory category
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+  /api/inventory/{tenantSlug}/categories/{categoryId}:
+    patch:
+      summary: Update inventory category
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: categoryId
+          required: true
+          schema:
+            type: string
+    delete:
+      summary: Delete inventory category
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: categoryId
+          required: true
+          schema:
+            type: string
+
+  /api/inventory/{tenantSlug}/units:
+    post:
+      summary: Create inventory unit
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+  /api/inventory/{tenantSlug}/units/{unitId}:
+    patch:
+      summary: Update inventory unit
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: unitId
+          required: true
+          schema:
+            type: string
+    delete:
+      summary: Delete inventory unit
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: unitId
+          required: true
+          schema:
+            type: string
+
+  /api/inventory/{tenantSlug}/products:
+    post:
+      summary: Create inventory product
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+  /api/inventory/{tenantSlug}/products/{productId}:
+    patch:
+      summary: Update inventory product
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: productId
+          required: true
+          schema:
+            type: string
+    delete:
+      summary: Delete inventory product
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: productId
+          required: true
+          schema:
+            type: string
+
+  /api/inventory/{tenantSlug}/outlets:
+    post:
+      summary: Create outlet branch (excluding PST)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+  /api/inventory/{tenantSlug}/outlets/{outletId}:
+    patch:
+      summary: Update outlet branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: outletId
+          required: true
+          schema:
+            type: string
+    delete:
+      summary: Delete outlet branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: outletId
+          required: true
+          schema:
+            type: string
+
+  /api/inventory/{tenantSlug}/movements:
+    post:
+      summary: Submit stock in/out movement
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+  /api/inventory/{tenantSlug}/opname:
+    post:
+      summary: Submit stock opname adjustment
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+  /api/inventory/{tenantSlug}/transfers:
+    post:
+      summary: Submit transfer between central/outlets
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenantSlug
+          required: true
+          schema:
+            type: string
+
   /api/billing/invoices:
     post:
       summary: Create tenant invoice

@@ -36,13 +36,13 @@ abstract class BaseApiController extends Controller
         $user = $request->user();
 
         if (!$user) {
-            return $this->error('Unauthorized', 401);
+            return $this->error('Sesi berakhir atau tidak diizinkan. Silakan login kembali.', 401);
         }
 
         $profile = DB::table('profiles')->where('id', $user->id)->first();
 
         if (!$profile || !$profile->is_active) {
-            return $this->error('Forbidden', 403);
+            return $this->error('Akses ditolak. Akun Anda tidak aktif.', 403);
         }
 
         return [
@@ -56,7 +56,7 @@ abstract class BaseApiController extends Controller
         $exists = DB::table('platform_admins')->where('profile_id', $profileId)->exists();
 
         if (!$exists) {
-            return $this->error('Platform admin only', 403);
+            return $this->error('Hanya admin platform yang diizinkan.', 403);
         }
 
         return null;
@@ -84,17 +84,24 @@ abstract class BaseApiController extends Controller
             ->first();
 
         if (!$membership) {
-            return $this->error('Tenant access denied', 403);
+            return $this->error('Akses Cabang/Outlet ditolak.', 403);
         }
 
         if ($allowedRoles !== [] && !in_array($membership->role, $allowedRoles, true)) {
-            return $this->error('Insufficient role', 403);
+            return $this->error('Peran tidak memadai untuk aksi ini.', 403);
         }
 
         $subscription = DB::table('subscriptions')
             ->where('tenant_id', $membership->tenant_id)
             ->orderByDesc('updated_at')
             ->first();
+
+        // Sync billing state if needed
+        if ($subscription && $subscription->status === 'trialing') {
+            app(\App\Services\BillingService::class)->syncTenantBillingState($membership->tenant_id);
+            // Refresh subscription after sync
+            $subscription = DB::table('subscriptions')->where('id', $subscription->id)->first();
+        }
 
         $isReadOnly = !$subscription || !in_array($subscription->status, ['trialing', 'active'], true);
 
@@ -120,6 +127,7 @@ abstract class BaseApiController extends Controller
                 'membershipRole' => $membership->role,
                 'accessibleBranchIds' => $branchIds,
                 'subscriptionStatus' => $subscription?->status,
+                'trialEndAt' => $subscription?->trial_end_at,
                 'isReadOnly' => $isReadOnly,
             ],
         ];

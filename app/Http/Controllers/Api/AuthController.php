@@ -30,16 +30,30 @@ class AuthController extends BaseApiController
 
         $user = User::query()->where('email', $validated['email'])->first();
 
-        if (!$user || !Hash::check($validated['password'], $user->password)) {
-            return $this->error('Invalid credentials', 401);
+        if (!$user) {
+            return $this->error('Email belum terdaftar. Silakan daftar akun terlebih dahulu.', 401);
+        }
+
+        if (!Hash::check($validated['password'], $user->password)) {
+            return $this->error('Email atau password salah. Silakan coba lagi.', 401);
         }
 
         $profile = DB::table('profiles')->where('id', $user->id)->first();
         if (!$profile || !$profile->is_active) {
-            return $this->error('Forbidden', 403);
+            return $this->error('Akun Anda belum aktif atau tidak memiliki akses.', 403);
         }
 
+        $isPlatformAdmin = DB::table('platform_admins')
+            ->where('profile_id', $profile->id)
+            ->exists();
+
         $token = $user->createToken('web')->plainTextToken;
+
+        // Trigger billing state transition check
+        $membership = DB::table('memberships')->where('profile_id', $profile->id)->first();
+        if ($membership) {
+            $this->billingService->syncTenantBillingState($membership->tenant_id);
+        }
 
         return $this->ok([
             'token' => $token,
@@ -56,6 +70,7 @@ class AuthController extends BaseApiController
                 'mustResetPassword' => (bool) $profile->must_reset_password,
                 'isActive' => (bool) $profile->is_active,
             ],
+            'isPlatformAdmin' => $isPlatformAdmin,
         ]);
     }
 
@@ -197,10 +212,10 @@ class AuthController extends BaseApiController
             ]);
         } catch (QueryException $exception) {
             if (str_contains(strtolower($exception->getMessage()), 'duplicate')) {
-                return $this->error('Email already exists', 422);
+                return $this->error('Email sudah terdaftar. Silakan gunakan email lain atau login.', 422);
             }
 
-            return $this->error('Unexpected error', 500);
+            return $this->error('Terjadi kesalahan sistem. Silakan coba beberapa saat lagi.', 500);
         } catch (\Throwable $exception) {
             return $this->error($exception->getMessage(), 500);
         }
@@ -211,6 +226,16 @@ class AuthController extends BaseApiController
         $auth = $this->authContext($request);
         if ($auth instanceof JsonResponse) {
             return $auth;
+        }
+
+        $isPlatformAdmin = DB::table('platform_admins')
+            ->where('profile_id', $auth['profile']->id)
+            ->exists();
+
+        // Trigger billing state transition check
+        $membership = DB::table('memberships')->where('profile_id', $auth['profile']->id)->first();
+        if ($membership) {
+            $this->billingService->syncTenantBillingState($membership->tenant_id);
         }
 
         return $this->ok([
@@ -227,6 +252,96 @@ class AuthController extends BaseApiController
                 'mustResetPassword' => (bool) $auth['profile']->must_reset_password,
                 'isActive' => (bool) $auth['profile']->is_active,
             ],
+            'isPlatformAdmin' => $isPlatformAdmin,
+        ]);
+    }
+
+    public function updateProfile(Request $request): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        $validated = $this->validateInput($request, [
+            'displayName' => ['required', 'string', 'min:2'],
+            'phone' => ['nullable', 'string'],
+        ]);
+
+        if ($validated instanceof JsonResponse) {
+            return $validated;
+        }
+
+        $displayName = trim($validated['displayName']);
+
+        if ($displayName === '') {
+            return $this->error('Nama profil wajib diisi.', 422);
+        }
+
+        DB::transaction(function () use ($auth, $displayName, $validated) {
+            DB::table('profiles')
+                ->where('id', $auth['profile']->id)
+                ->update([
+                    'display_name' => $displayName,
+                    'phone' => $validated['phone'] ?? null,
+                    'updated_at' => now(),
+                ]);
+
+            User::query()
+                ->where('id', $auth['user']->id)
+                ->update([
+                    'name' => $displayName,
+                ]);
+        }, 3);
+
+        $profile = DB::table('profiles')->where('id', $auth['profile']->id)->first();
+
+        return $this->ok([
+            'profile' => [
+                'id' => $profile->id,
+                'email' => $profile->email,
+                'displayName' => $profile->display_name,
+                'phone' => $profile->phone,
+                'mustResetPassword' => (bool) $profile->must_reset_password,
+                'isActive' => (bool) $profile->is_active,
+            ],
+        ]);
+    }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        $validated = $this->validateInput($request, [
+            'newPassword' => ['required', 'string', 'min:8'],
+            'newPasswordConfirmation' => ['required', 'same:newPassword'],
+        ]);
+
+        if ($validated instanceof JsonResponse) {
+            return $validated;
+        }
+
+        DB::transaction(function () use ($auth, $validated) {
+            User::query()
+                ->where('id', $auth['user']->id)
+                ->update([
+                    'password' => Hash::make($validated['newPassword']),
+                ]);
+
+            DB::table('profiles')
+                ->where('id', $auth['profile']->id)
+                ->update([
+                    'must_reset_password' => false,
+                    'updated_at' => now(),
+                ]);
+        }, 3);
+
+        return $this->ok([
+            'ok' => true,
+            'message' => 'Password berhasil diperbarui.',
         ]);
     }
 
@@ -234,7 +349,7 @@ class AuthController extends BaseApiController
     {
         $user = $request->user();
         if (!$user) {
-            return $this->error('Unauthorized', 401);
+            return $this->error('Sesi Anda telah berakhir. Silakan login kembali.', 401);
         }
 
         $token = $user->currentAccessToken();
@@ -271,6 +386,6 @@ class AuthController extends BaseApiController
             $candidate = Str::limit($normalized.'-'.$suffix, 63, '');
         }
 
-        throw new \RuntimeException('Unable to generate unique tenant slug');
+        throw new \RuntimeException('Gagal membuat identitas unik untuk Cabang/Outlet.');
     }
 }

@@ -21,7 +21,7 @@ class PlatformController extends BaseApiController
         if ($secret) {
             $provided = $request->header('x-cron-secret');
             if ($provided !== $secret) {
-                return $this->error('Unauthorized cron secret', 401);
+                return $this->error('Secret cron tidak valid.', 401);
             }
         }
 
@@ -251,7 +251,7 @@ class PlatformController extends BaseApiController
         }
 
         if ($update === []) {
-            return $this->error('No fields to update', 422);
+            return $this->error('Tidak ada data yang diubah.', 422);
         }
 
         $update['updated_at'] = now();
@@ -259,6 +259,36 @@ class PlatformController extends BaseApiController
         DB::table('plans')->where('id', $validated['id'])->update($update);
 
         return $this->ok(['plan' => DB::table('plans')->where('id', $validated['id'])->first()]);
+    }
+
+    public function deletePlan(Request $request): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        if ($platformError = $this->requirePlatformAdmin($auth['profile']->id)) {
+            return $platformError;
+        }
+
+        $validated = $this->validateInput($request, [
+            'id' => ['required', 'uuid'],
+        ]);
+
+        if ($validated instanceof JsonResponse) {
+            return $validated;
+        }
+
+        // Only allow deleting platform-wide plans (tenant_id is null)
+        $plan = DB::table('plans')->where('id', $validated['id'])->whereNull('tenant_id')->first();
+        if (!$plan) {
+            return $this->error('Paket tidak ditemukan atau tidak dapat dihapus.', 404);
+        }
+
+        DB::table('plans')->where('id', $validated['id'])->delete();
+
+        return $this->ok(['success' => true]);
     }
 
     public function tenants(Request $request): JsonResponse
@@ -295,6 +325,7 @@ class PlatformController extends BaseApiController
                 'type' => $tenant->type,
                 'status' => $tenant->status,
                 'createdAt' => $tenant->created_at,
+                'expiryDate' => $subscription ? ($subscription->status === 'trialing' ? $subscription->trial_end_at : $subscription->period_end_at) : null,
                 'owner' => $owner ? [
                     'email' => $owner->email,
                     'displayName' => $owner->display_name,
@@ -308,5 +339,78 @@ class PlatformController extends BaseApiController
         })->all();
 
         return $this->ok(['tenants' => $result]);
+    }
+
+    public function tenantDetails(Request $request, string $tenantId): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        if ($platformError = $this->requirePlatformAdmin($auth['profile']->id)) {
+            return $platformError;
+        }
+
+        $tenant = DB::table('tenants')->where('id', $tenantId)->first();
+        if (!$tenant) {
+            return $this->error('Cabang/Outlet tidak ditemukan.', 404);
+        }
+
+        $subscription = DB::table('subscriptions')
+            ->where('tenant_id', $tenant->id)
+            ->orderByDesc('updated_at')
+            ->first();
+
+        $owner = DB::table('memberships')
+            ->join('profiles', 'memberships.profile_id', '=', 'profiles.id')
+            ->where('memberships.tenant_id', $tenant->id)
+            ->where('memberships.role', 'tenant_owner')
+            ->select('profiles.email', 'profiles.display_name', 'profiles.phone')
+            ->first();
+
+        $branches = DB::table('branches')
+            ->where('tenant_id', $tenant->id)
+            ->get();
+
+        // Stock Transactions (Movements) - optional, may not exist in all setups
+        try {
+            $movements = DB::table('inventory_movements')
+                ->join('branches', 'inventory_movements.branch_id', '=', 'branches.id')
+                ->join('products', 'inventory_movements.product_id', '=', 'products.id')
+                ->join('users', 'inventory_movements.created_by', '=', 'users.id')
+                ->where('branches.tenant_id', $tenant->id)
+                ->orderByDesc('inventory_movements.created_at')
+                ->limit(50)
+                ->select([
+                    'inventory_movements.id',
+                    'inventory_movements.type',
+                    'inventory_movements.quantity',
+                    'inventory_movements.notes',
+                    'inventory_movements.created_at',
+                    'branches.name as branch_name',
+                    'products.name as product_name',
+                    'users.name as user_name',
+                ])
+                ->get();
+        } catch (\Exception $e) {
+            // If tables don't exist, return empty array
+            $movements = collect([]);
+        }
+
+        return $this->ok([
+            'tenant' => [
+                'id' => $tenant->id,
+                'name' => $tenant->name,
+                'slug' => $tenant->slug,
+                'status' => $tenant->status,
+                'createdAt' => $tenant->created_at,
+                'expiryDate' => $subscription ? ($subscription->status === 'trialing' ? $subscription->trial_end_at : $subscription->period_end_at) : null,
+            ],
+            'owner' => $owner,
+            'subscription' => $subscription,
+            'branches' => $branches,
+            'transactions' => $movements,
+        ]);
     }
 }
