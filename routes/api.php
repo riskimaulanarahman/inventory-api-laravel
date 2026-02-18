@@ -70,6 +70,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/platform/plans', [PlatformController::class, 'deletePlan']);
     Route::get('/platform/tenants', [PlatformController::class, 'tenants']);
     Route::get('/platform/tenants/{tenantId}', [PlatformController::class, 'tenantDetails']);
+    Route::patch('/platform/tenants/{tenantId}/status', [PlatformController::class, 'updateTenantStatus']);
+    Route::patch('/platform/tenants/{tenantId}/subscription', [PlatformController::class, 'updateSubscription']);
+
+    Route::get('/platform/users', [PlatformController::class, 'listUsers']);
+    Route::post('/platform/users/{profileId}/toggle-status', [PlatformController::class, 'toggleUserStatus']);
 });
 
 Route::post('/platform/billing/run-daily', [PlatformController::class, 'runDaily']);

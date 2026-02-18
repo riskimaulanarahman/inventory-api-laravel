@@ -15,6 +15,183 @@ class PlatformController extends BaseApiController
     {
     }
 
+    public function listUsers(Request $request): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        if ($platformError = $this->requirePlatformAdmin($auth['profile']->id)) {
+            return $platformError;
+        }
+
+        $search = $request->query('search');
+
+        $query = DB::table('profiles')
+            ->select([
+                'profiles.id',
+                'profiles.email',
+                'profiles.display_name',
+                'profiles.phone',
+                'profiles.is_active',
+                'profiles.created_at',
+            ])
+            ->orderByDesc('profiles.created_at');
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('profiles.email', 'like', "%{$search}%")
+                  ->orWhere('profiles.display_name', 'like', "%{$search}%")
+                  ->orWhere('profiles.phone', 'like', "%{$search}%");
+            });
+        }
+
+        // Pagination manually or just get all for now (limit 100)
+        $profiles = $query->limit(100)->get();
+
+        // Attach tenant info
+        $result = $profiles->map(function ($profile) {
+            $memberships = DB::table('memberships')
+                ->join('tenants', 'memberships.tenant_id', '=', 'tenants.id')
+                ->where('memberships.profile_id', $profile->id)
+                ->select('tenants.id as tenant_id', 'tenants.name as tenant_name', 'memberships.role')
+                ->get();
+
+            return [
+                'id' => $profile->id,
+                'email' => $profile->email,
+                'name' => $profile->display_name,
+                'phone' => $profile->phone,
+                'isActive' => (bool) $profile->is_active,
+                'createdAt' => $profile->created_at,
+                'memberships' => $memberships->map(fn($m) => [
+                    'tenantId' => $m->tenant_id,
+                    'tenantName' => $m->tenant_name,
+                    'role' => $m->role,
+                ]),
+            ];
+        });
+
+        return $this->ok(['users' => $result]);
+    }
+
+    public function toggleUserStatus(Request $request, string $profileId): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        if ($platformError = $this->requirePlatformAdmin($auth['profile']->id)) {
+            return $platformError;
+        }
+
+        $profile = DB::table('profiles')->where('id', $profileId)->first();
+        if (!$profile) {
+            return $this->error('User not found', 404);
+        }
+
+        // Prevent deactivating self
+        if ($profile->id === $auth['profile']->id) {
+            return $this->error('Cannot deactivate your own account', 400);
+        }
+
+        $newState = !$profile->is_active;
+
+        DB::table('profiles')->where('id', $profileId)->update([
+            'is_active' => $newState,
+            'updated_at' => now(),
+        ]);
+
+        return $this->ok(['isActive' => $newState]);
+    }
+
+    public function updateSubscription(Request $request, string $tenantId): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        if ($platformError = $this->requirePlatformAdmin($auth['profile']->id)) {
+            return $platformError;
+        }
+
+        $validated = $this->validateInput($request, [
+            'status' => ['required', 'string', 'in:trialing,active,past_due,canceled,expired'],
+            'trialEndAt' => ['nullable', 'date'],
+            'periodEndAt' => ['nullable', 'date'],
+            'readOnlyMode' => ['required', 'boolean'],
+        ]);
+
+        if ($validated instanceof JsonResponse) {
+            return $validated;
+        }
+
+        $subscription = DB::table('subscriptions')
+            ->where('tenant_id', $tenantId)
+            ->first();
+
+        if (!$subscription) {
+            // Should create one if missing? For now assume existing.
+             return $this->error('Subscription info not found for this tenant', 404);
+        }
+
+        DB::table('subscriptions')
+            ->where('id', $subscription->id)
+            ->update([
+                'status' => $validated['status'],
+                'trial_end_at' => $validated['trialEndAt'] ? date('Y-m-d H:i:s', strtotime($validated['trialEndAt'])) : null,
+                'period_end_at' => $validated['periodEndAt'] ? date('Y-m-d H:i:s', strtotime($validated['periodEndAt'])) : null,
+                'read_only_mode' => $validated['readOnlyMode'],
+                'updated_at' => now(),
+            ]);
+
+        // Log event
+        DB::table('subscription_events')->insert([
+            'id' => (string) Str::uuid(),
+            'tenant_id' => $tenantId,
+            'subscription_id' => $subscription->id,
+            'event_type' => 'manual_update',
+            'payload' => json_encode([
+                'changed_by' => $auth['profile']->id,
+                'changes' => $validated,
+            ]),
+            'created_by' => $auth['profile']->id,
+            'created_at' => now(),
+        ]);
+
+        return $this->ok(['success' => true]);
+    }
+
+    public function updateTenantStatus(Request $request, string $tenantId): JsonResponse
+    {
+        $auth = $this->authContext($request);
+        if ($auth instanceof JsonResponse) {
+            return $auth;
+        }
+
+        if ($platformError = $this->requirePlatformAdmin($auth['profile']->id)) {
+            return $platformError;
+        }
+
+        $validated = $this->validateInput($request, [
+            'status' => ['required', 'string', 'in:active,suspended'],
+        ]);
+
+        if ($validated instanceof JsonResponse) {
+            return $validated;
+        }
+
+        DB::table('tenants')->where('id', $tenantId)->update([
+            'status' => $validated['status'],
+            'updated_at' => now(),
+        ]);
+
+        return $this->ok(['success' => true, 'status' => $validated['status']]);
+    }
+
     public function runDaily(Request $request): JsonResponse
     {
         $secret = env('CRON_SECRET');
@@ -408,7 +585,15 @@ class PlatformController extends BaseApiController
                 'expiryDate' => $subscription ? ($subscription->status === 'trialing' ? $subscription->trial_end_at : $subscription->period_end_at) : null,
             ],
             'owner' => $owner,
-            'subscription' => $subscription,
+            'subscription' => $subscription ? [
+                'status' => $subscription->status,
+                'current_cycle' => $subscription->current_cycle,
+                'period_start_at' => $subscription->period_start_at,
+                'period_end_at' => $subscription->period_end_at,
+                'trial_start_at' => $subscription->trial_start_at,
+                'trial_end_at' => $subscription->trial_end_at,
+                'read_only_mode' => (bool) $subscription->read_only_mode,
+            ] : null,
             'branches' => $branches,
             'transactions' => $movements,
         ]);
